@@ -1,0 +1,45 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# smoke test for fs (planner/executor/journal/undo)
+set -e
+T="$HOME/tmp/fs-selftest"
+rm -rf "$T"
+fs() { FSROOT="$T/luafs" "$HOME/usr/scripts/fs" "$@"; }
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+mkdir -p "$T/src/sub"; echo a > "$T/src/a.txt"; echo b > "$T/src/sub/b.txt"
+fs cp "$T/src" "$T/dst" 2>/dev/null
+[ "$(cat "$T/dst/sub/b.txt")" = b ] || fail "cp tree"
+fs undo 2>/dev/null
+[ ! -e "$T/dst" ] || fail "undo cp"
+
+mkdir "$T/d2"; echo old > "$T/d2/new"; echo new > "$T/new"
+fs cp "$T/new" "$T/d2" 2>/dev/null && fail "overwrite guard"
+fs cp -f "$T/new" "$T/d2" 2>/dev/null
+[ "$(cat "$T/d2/new")" = new ] || fail "force cp"
+fs undo 2>/dev/null
+[ "$(cat "$T/d2/new")" = old ] || fail "undo force"
+
+fs mv "$T/new" "$T/moved" 2>/dev/null
+fs undo 2>/dev/null
+[ -e "$T/new" ] || fail "undo mv"
+
+fs chmod 600 "$T/src/a.txt" 2>/dev/null
+[ "$(ls -l "$T/src/a.txt" | cut -c1-10)" = "-rw-------" ] || fail "chmod octal"
+fs chmod u+x "$T/src/a.txt" 2>/dev/null
+[ "$(ls -l "$T/src/a.txt" | cut -c4)" = x ] || fail "chmod symbolic"
+fs undo 2>/dev/null
+[ "$(ls -l "$T/src/a.txt" | cut -c4)" = - ] || fail "undo chmod"
+
+fs mkdir -m 700 "$T/md/x" 2>/dev/null
+[ "$(ls -ld "$T/md/x" | cut -c1-10)" = "drwx------" ] || fail "mkdir -m"
+fs undo 2>/dev/null
+[ ! -e "$T/md" ] || fail "undo mkdir"
+
+fs rm "$T/src/sub" 2>/dev/null
+[ ! -e "$T/src/sub" ] || fail "rm"
+fs undo 2>/dev/null
+[ "$(cat "$T/src/sub/b.txt")" = b ] || fail "undo rm"
+
+fs rm / 2>/dev/null && fail "root guard"
+rm -rf "$T"
+echo "fs self-test: OK"
